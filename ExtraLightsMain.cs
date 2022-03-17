@@ -9,35 +9,89 @@ namespace DVExtraLights
     public static class ExtraLightsMain
     {
         public static UnityModManager.ModEntry ModEntry { get; private set; }
+        public static Settings Settings { get; private set; }
 
         public static bool Load( UnityModManager.ModEntry modEntry )
         {
             ModEntry = modEntry;
+            Settings = UnityModManager.ModSettings.Load<Settings>(modEntry);
+            ModEntry.OnGUI = OnGUI;
+            ModEntry.OnSaveGUI = OnSaveGUI;
 
             var harmony = new Harmony("cc.foxden.extra_lights");
             harmony.PatchAll(Assembly.GetExecutingAssembly());
 
-            PlayerManager.PlayerChanged += OnPlayerChanged;
+            PlayerManager.PlayerChanged += UpdatePlayerGlow;
+            ModEntry.OnUpdate = Update;
 
             return true;
         }
 
-        private static void OnPlayerChanged()
+        static void OnGUI(UnityModManager.ModEntry modEntry)
         {
-            GameObject glowHolder = new GameObject("PlayerGlowHolder");
-            glowHolder.transform.parent = PlayerManager.PlayerCamera.transform;
-            glowHolder.transform.localPosition = Vector3.up * 0.3f;
+            Settings.Draw(modEntry);
+        }
 
-            Light playerGlow = glowHolder.AddComponent<Light>();
-            playerGlow.type = LightType.Point;
-            playerGlow.intensity = 0.15f;
+        static void OnSaveGUI(UnityModManager.ModEntry modEntry)
+        {
+            Settings.Save(modEntry);
+        }
+
+        private const string GLOW_HOLDER_NAME = "PlayerGlowHolder";
+        public static Light PlayerLight { get; private set; } = null;
+
+        private static bool _playerLightOn;
+        public static bool PlayerLightOn
+        {
+            get => _playerLightOn;
+            set
+            {
+                _playerLightOn = value;
+                UpdatePlayerGlowIntensity();
+            }
+        }
+
+        public static void UpdatePlayerGlow()
+        {
+            Transform glowHolder = PlayerManager.PlayerCamera.transform.Find(GLOW_HOLDER_NAME);
+
+            if (!glowHolder)
+            {
+                var newHolderObj = new GameObject(GLOW_HOLDER_NAME);
+                glowHolder = newHolderObj.transform;
+                glowHolder.parent = PlayerManager.PlayerCamera.transform;
+                glowHolder.localPosition = Vector3.up * 0.3f;
+
+                PlayerLight = newHolderObj.AddComponent<Light>();
+                PlayerLight.type = LightType.Point;
+                PlayerLight.renderMode = LightRenderMode.ForceVertex;
+            }
+            else
+            {
+                PlayerLight = glowHolder.GetComponent<Light>();
+            }
+
+            UpdatePlayerGlowIntensity();
+        }
+
+        private static void UpdatePlayerGlowIntensity()
+        {
+            PlayerLight.intensity = PlayerLightOn ? Settings.PlayerLightIntensity : 0;
+        }
+
+        private static void Update(UnityModManager.ModEntry modEntry, float deltaTime)
+        {
+            if (Settings.TogglePlayerLightKey.Up())
+            {
+                PlayerLightOn = !PlayerLightOn;
+            }
         }
     }
 
     [HarmonyPatch(typeof(StationController), "Start")]
     static class StationController_Awake_Patch
     {
-        private static string[] lightTransforms =
+        private static readonly string[] lightTransforms =
         {
             "Office_01/Office_1_interior/CeilingLights",
             "Office_02/Office_2_interior/CeilingLights",
@@ -63,6 +117,7 @@ namespace DVExtraLights
                         Transform childLight = lightParent.GetChild(i);
                         Light newLight = childLight.gameObject.AddComponent<Light>();
                         newLight.intensity = 0.5f;
+                        newLight.renderMode = LightRenderMode.ForceVertex;
                     }
                 }
             }
